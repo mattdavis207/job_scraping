@@ -1,4 +1,4 @@
-"""Render API: authenticated SQLite job queue; never starts a browser."""
+"""Render API: queued job descriptions and direct application-form scraping."""
 import hmac
 import json
 import os
@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, field_validator
+from main import ApplicationQuestionsRequest, application_questions
 
 app = FastAPI(title="Scraping job queue")
 LEASE_SECONDS = 300
@@ -23,6 +24,11 @@ def authenticate(authorization: str = Header(default="")):
         raise HTTPException(503, "QUEUE_API_TOKEN is not configured")
     if not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
         raise HTTPException(401, "Invalid bearer token")
+
+
+@app.post("/application-questions", dependencies=[Depends(authenticate)])
+def direct_application_questions(request: ApplicationQuestionsRequest):
+    return application_questions(request)
 
 
 @contextmanager

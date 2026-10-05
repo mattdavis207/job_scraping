@@ -2,10 +2,11 @@ import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 import queue_api
+import main
 
 
 class QueueTests(unittest.TestCase):
@@ -70,6 +71,39 @@ class QueueTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             replies = list(pool.map(lambda _: queue_api.claim(), range(2)))
         self.assertEqual(sum(reply['job'] is not None for reply in replies), 1)
+
+    def test_application_route_is_direct(self):
+        urls = ['https://example.com/apply', 'https://careers.example.org/form']
+        with patch('main.scrape_application', side_effect=[{'fields': [1]}, {'fields': [2]}]) as scrape:
+            self.assertEqual(self.client.post('/application-questions', json={'urls': urls}).status_code, 401)
+            scrape.assert_not_called()
+            response = self.post('/application-questions', {'urls': urls})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [{'fields': [1]}, {'fields': [2]}])
+        self.assertEqual([call.args[0] for call in scrape.call_args_list], urls)
+        self.assertIsNone(self.post('/worker/claim', {}).json()['job'])
+
+    def test_anonymous_browser_needs_no_state(self):
+        playwright = MagicMock()
+        with main.authenticated_context(playwright, use_handshake=False):
+            pass
+        playwright.chromium.launch.return_value.new_context.assert_called_once_with()
+        playwright.chromium.launch.return_value.close.assert_called_once()
+
+    def test_application_collects_all_fields(self):
+        context = MagicMock()
+        page = context.new_page.return_value
+        page.url = 'https://example.com/apply'
+        page.goto.return_value.status = 200
+        fields = page.locator.return_value.locator.return_value
+        fields.count.return_value = 2
+        fields.nth.return_value.get_attribute.return_value = None
+        with patch('main.sync_playwright'), patch('main.authenticated_context') as create_context:
+            create_context.return_value.__enter__.return_value = context
+            result = main.scrape_application(page.url)
+        self.assertEqual(len(result['fields']), 2)
+        self.assertFalse(create_context.call_args.kwargs['use_handshake'])
+        page.close.assert_called_once()
 
 
 if __name__ == '__main__':

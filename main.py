@@ -28,17 +28,20 @@ def safe_location(url):
 
 
 @contextmanager
-def authenticated_context(playwright):
+def authenticated_context(playwright, *, use_handshake=True):
     state_path = Path(os.getenv("HANDSHAKE_STORAGE_STATE", "/etc/secrets/handshake.json"))
-    log_scrape("auth_file", exists=state_path.is_file(), headless=HEADLESS)
+    if use_handshake:
+        log_scrape("auth_file", exists=state_path.is_file(), headless=HEADLESS)
     browser = None
     stage = "browser_launch"
     try:
         log_scrape(stage)
         browser = playwright.chromium.launch(headless=HEADLESS, timeout=30_000)
-        stage = "load_auth_state"
+        stage = "load_auth_state" if use_handshake else "anonymous_context"
         log_scrape(stage)
-        context = browser.new_context(storage_state=str(state_path))
+        context = browser.new_context(**(
+            {"storage_state": str(state_path)} if use_handshake else {}
+        ))
         context.set_default_timeout(15_000)
         context.set_default_navigation_timeout(30_000)
         log_scrape("context_ready")
@@ -204,7 +207,7 @@ def application_questions(request: ApplicationQuestionsRequest):
 
 
 def scrape_application(url):
-    with sync_playwright() as p, authenticated_context(p) as context:
+    with sync_playwright() as p, authenticated_context(p, use_handshake=False) as context:
         page = context.new_page()
         request_id = uuid4().hex[:12]
         attach_diagnostics(page, request_id)
@@ -292,12 +295,12 @@ def scrape_application(url):
                         else None
                 })
 
-                return {
-                    "url": page.url,
-                    "title": page.title(),
-                    "form_text": form.all_inner_texts(),
-                    "fields": fields
-                }
+            return {
+                "url": page.url,
+                "title": page.title(),
+                "form_text": form.all_inner_texts(),
+                "fields": fields
+            }
         except Exception as e:
             log_page_failure(page, request_id, stage, e)
             return{

@@ -1,2 +1,7 @@
 /playwright/.auth
 .venv
+/.auth/
+/.env
+/data/
+__pycache__/
+*.pyc

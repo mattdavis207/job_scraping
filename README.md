@@ -1,54 +1,121 @@
-# job_scraping
-This repository contain FastAPI endpoints for playwright browser automation and web scraping for job application descriptions/content.
+# Job scraping: Render API + local worker
 
-## Deploy on Render
+Render stores jobs and results. `worker.py` runs on the computer where Handshake
+works, polls Render over HTTPS, opens Playwright locally, and uploads results.
+No inbound port or tunnel is required on the worker computer. Keep it awake and
+online. Handshake login state stays on that computer.
 
-Commit and push `requirements.txt`, `.python-version`, `main.py`,
-and this README to your repository. Create a **Web Service** with these settings:
+## 1. Deploy the queue API on Render
+
+Push the project files, including `queue_api.py` and `worker.py`.
+Use a Python web service with these settings:
 
 | Field | Value |
 | --- | --- |
-| Repository | `https://github.com/mattdavis207/job_scraping` |
-| Name | `job-scraping` (or another available name) |
 | Branch | `main` |
-| Language / Runtime | `Python 3` |
-| Region | Choose the region closest to your API consumers |
-| Root Directory | Leave blank |
-| Build Command | `pip install -r requirements.txt && python -m playwright install chromium` |
-| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1` |
-| Pre-Deploy Command | Leave blank |
-| Health Check Path | `/health` |
-| Environment Variables | `HEADLESS=true`, `PLAYWRIGHT_BROWSERS_PATH=0`, `BROWSER_PROFILE_PATH=/tmp/job-scraping-profile` |
-| Auto-Deploy | On Commit, if you want pushes to deploy automatically |
-| Instance Type | Choose a plan with enough memory for Chromium; 2 GB is a starting recommendation, not a measured requirement |
+| Runtime | Python 3 |
+| Root directory | Leave blank |
+| Build command | `pip install -r requirements.txt` |
+| Start command | `uvicorn queue_api:app --host 0.0.0.0 --port $PORT --workers 1` |
+| Health check | `/health` |
+| Environment | `QUEUE_API_TOKEN` and `QUEUE_DB_PATH` (below) |
 
-The build installs Python dependencies and Chromium. `PLAYWRIGHT_BROWSERS_PATH=0`
-keeps the browser installation inside the Playwright package for runtime access.
-Render supplies `PORT`; `.python-version` selects Python 3.11.
-After deployment, check `/health` and open `/docs` on your Render service URL.
+Generate a random token locally with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
+Set that value as `QUEUE_API_TOKEN` on Render and on the worker. Keep it private;
+it grants job submission, result access, and worker access. This setup is for one
+trusted owner, not separate customer accounts. Do not put the token in public
+frontend code.
 
-For an existing Docker service, open Settings → Build → Source → Edit, select
-the repository, and switch Runtime to Python with the commands above.
+For durable jobs, attach a Render persistent disk at `/var/data` and set
+`QUEUE_DB_PATH=/var/data/jobs.sqlite3`. Persistent disks require a paid service.
+Use one service instance: this SQLite queue does not support multiple Render
+instances with separate disks. For a temporary test without a disk, use
+`QUEUE_DB_PATH=/tmp/jobs.sqlite3`; jobs and results can disappear on redeployment
+or restart. Completed results currently remain in the database until you remove
+them; no automatic retention policy is implemented.
 
-Local runs retain a visible browser by default. Set `HEADLESS=true` to run locally
-without a browser window.
+The Render service no longer needs Chromium installation, `HEADLESS`,
+`PLAYWRIGHT_BROWSERS_PATH`, `BROWSER_PROFILE_PATH`, or the Handshake secret file.
+Remove the old login secret from Render once you have switched. The start command
+must use **queue_api:app**, not **main:app**. The old direct scraper routes are not
+exposed by this queue API.
 
-### Current limitations
+## 2. Authenticate and start the worker on your computer
 
-- Chromium also requires Linux system libraries. The native runtime has not been
-  tested here; if browser launch reports a missing shared library, downloading
-  Chromium alone is insufficient. Native builds cannot be assumed to support
-  privileged `playwright install --with-deps` installation.
-- `BROWSER_PROFILE_PATH` points to a fresh server profile. Authenticated sites
-  require separate server-side authentication setup.
-- `.auth` is currently tracked in Git and is included in a native checkout.
-  The server uses the separate profile path above; avoid committing more profile data.
-- The server profile is ephemeral and may be lost on restarts or deployments.
-- Both scraping endpoints share one browser profile. Send scraping requests one
-  at a time until profile locking or isolated request contexts are implemented.
-- `/jd-scrape` currently expects a JSON body on a GET request. Use a client that
-  supports this; browser-based Swagger UI may not send it.
+From the project directory:
 
-References: [Render FastAPI deployment](https://render.com/docs/deploy-fastapi),
-[Render native runtimes](https://render.com/docs/native-runtimes),
-[Playwright browser installation](https://playwright.dev/python/docs/browsers).
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
+python test_scripts/get_profile.py
+```
+
+In the opened browser, log in and open a job description, then press Enter in
+the terminal to save `playwright/.auth/handshake.json`. Skip this login step if
+that file already contains your working session.
+
+Then set configuration and run the worker:
+
+```bash
+export QUEUE_API_URL='https://YOUR-SERVICE.onrender.com'
+read -rs 'QUEUE_API_TOKEN?Paste your queue token: '
+export QUEUE_API_TOKEN
+export HEADLESS=false
+export HANDSHAKE_STORAGE_STATE="$PWD/playwright/.auth/handshake.json"
+python worker.py
+```
+
+The hidden token prompt above is for macOS's default zsh. The worker uses existing
+scraping functions in `main.py`. Keep the terminal running. Stop with Ctrl+C.
+If login expires, stop the worker, rerun the login script, and restart it.
+Do not copy Render's `PLAYWRIGHT_BROWSERS_PATH=0` into your local environment unless
+you also installed Chromium with that setting.
+
+## 3. Submit a job and retrieve the result
+
+From a trusted client/terminal with `QUEUE_API_URL` and `QUEUE_API_TOKEN` set:
+
+```bash
+curl -sS "$QUEUE_API_URL/jobs" \
+  -H "Authorization: Bearer $QUEUE_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"job_description","url":"https://app.joinhandshake.com/job-search/11307575"}'
+```
+
+The API responds HTTP 202 with `{"id":"...","status":"queued"}`. Copy the id:
+
+```bash
+curl -sS "$QUEUE_API_URL/jobs/JOB_ID" \
+  -H "Authorization: Bearer $QUEUE_API_TOKEN"
+```
+
+Poll every few seconds until `status` is `completed` or `failed`. On completion,
+`result.job_description` contains the extracted text. Submit one URL per job.
+`kind: "application_questions"` invokes the existing application form scraper.
+Only HTTPS `joinhandshake.com` and its subdomains are accepted as input URLs.
+The existing scraper can follow site redirects; only trusted callers should
+have access to the queue token.
+
+A job stays `queued` when no worker is online. Workers claim one job at a time,
+renew a five-minute lease every 30 seconds, and retry network failures. A worker
+that crashes or loses connectivity stops renewing its lease; another poll can
+reclaim that job. Delivery is at least once, so interrupted jobs can run again.
+A `running` job with an expired lease is reclaimed when a worker next polls.
+
+This architecture uses your working local browser environment; it does not
+guarantee future Handshake access or automatically solve authentication challenges.
+Watch the **local worker terminal** for browser errors and Render logs for API errors.
+Login state and browser profiles must not be committed. The root `.auth` directory
+was already tracked in this repository; adding an ignore rule does not remove
+previously committed files or history.
+
+## Checks
+
+The tests use FastAPI's TestClient and require `httpx` in your development environment:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Install test dependencies with `pip install -r requirements-dev.txt` first.

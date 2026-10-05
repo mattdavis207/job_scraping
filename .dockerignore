@@ -1,0 +1,10 @@
+.git
+.venv
+.env
+.auth
+**/.auth
+__pycache__
+**/__pycache__
+*.pyc
+*.png
+test_scripts

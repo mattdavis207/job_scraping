@@ -8,8 +8,11 @@ urls1 = ["https://apply.workable.com/mindex/j/84B10DB922/apply?utm_source=Simpli
 
 urls2 = ["https://eaiti.applytojob.com/apply/Y16NUsHVnd/Entry-Level-Software-Developer?gh_src=Handshake&iisn=Handshake&iis=Handshake&src=Handshake&source=Handshake&ref=Handshake&utm_medium=Handshake&referral=Handshake&utm_source=Handshake&__jvst=Handshake&__jvsd=Handshake&sourceDetails=Handshake&trid=Handshake&lever-source%5B%5D=Handshake&Source=Handshake&rb=Handshake&jobBoardSource=Handshake&channel=Handshake&rcid=Handshake"]
 
+urls4 = ["https://job-boards.greenhouse.io/embed/job_app?for=databricks&ref=Simplify&token=8847738002&utm_source=Simplify"]
+
 urls3 = ["https://careers.withwaymo.com/jobs/2027-summer-intern-ms-phd-ai-driven-ml-performance-engineering-intern-mountain-view-california-united-states?gh_jid=8248060&ref=Simplify&utm_source=Simplify"]
 
+urls5 = ["https://job-boards.greenhouse.io/arcboatcompany/jobs/5442881008?utm_source=Simplify&ref=Simplify"]
 
 with sync_playwright() as p:
     context = p.chromium.launch_persistent_context(
@@ -20,7 +23,7 @@ with sync_playwright() as p:
     results = []
 
     try: 
-        for url in urls1:
+        for url in urls5:
             page = context.new_page()
             try:
                 page.goto(url, wait_until="domcontentloaded")
@@ -76,7 +79,7 @@ with sync_playwright() as p:
                                 if (
                                     text &&
                                     !seen.has(text) &&
-                                    text.length < 1000
+                                    text.length < 500
                                 ) {
                                     candidates.push({
                                         level: level,

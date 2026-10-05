@@ -5,7 +5,7 @@ import os
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
-PROFILE = Path(__file__).resolve().parent / ".auth"
+PROFILE = Path(os.getenv("BROWSER_PROFILE_PATH", str(Path(__file__).resolve().parent / ".auth")))
 HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"
 
 app = FastAPI()
@@ -23,9 +23,13 @@ class ApplicationQuestionsRequest(BaseModel):
 @app.get("/jd-scrape")
 def get_job_description(request: JobScrapeRequest):
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            PROFILE,
-            headless=HEADLESS
+        # context = p.chromium.launch_persistent_context(
+        #     PROFILE,
+        #     headless=HEADLESS
+        # )
+        browser = p.chromium.launch(headless=HEADLESS)
+        context = browser.new_context(
+            storage_state="/etc/secrets/handshake.json"
         )
 
         results = []
@@ -100,6 +104,7 @@ def get_job_description(request: JobScrapeRequest):
                     page.close()
         finally:
             context.close()
+            browser.close()
     
     return results
 
@@ -119,10 +124,14 @@ def application_questions(request: ApplicationQuestionsRequest):
 
 def scrape_application(url):
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            PROFILE,
-            headless=HEADLESS
-        )  
+        # context = p.chromium.launch_persistent_context(
+        #     PROFILE,
+        #     headless=HEADLESS
+        # )  
+        browser = p.chromium.launch(headless=HEADLESS)
+        context = browser.new_context(
+            storage_state="/etc/secrets/handshake.json"
+        )
 
         page = context.new_page()
 
@@ -221,3 +230,4 @@ def scrape_application(url):
                 page.close()     
             finally: 
                 context.close()
+                browser.close()

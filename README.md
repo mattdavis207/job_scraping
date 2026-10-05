@@ -3,7 +3,7 @@ This repository contain FastAPI endpoints for playwright browser automation and 
 
 ## Deploy on Render
 
-Commit and push `requirements.txt`, `Dockerfile`, `.dockerignore`, `main.py`,
+Commit and push `requirements.txt`, `.python-version`, `main.py`,
 and this README to your repository. Create a **Web Service** with these settings:
 
 | Field | Value |
@@ -11,38 +11,44 @@ and this README to your repository. Create a **Web Service** with these settings
 | Repository | `https://github.com/mattdavis207/job_scraping` |
 | Name | `job-scraping` (or another available name) |
 | Branch | `main` |
-| Language / Runtime | `Docker` |
+| Language / Runtime | `Python 3` |
 | Region | Choose the region closest to your API consumers |
 | Root Directory | Leave blank |
-| Dockerfile Path | `./Dockerfile` |
-| Docker Build Context | `.` (if shown) |
-| Docker Command | Leave blank; uses the Dockerfile CMD |
-| Build Command / Start Command | Not needed for Docker |
+| Build Command | `pip install -r requirements.txt && python -m playwright install chromium` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1` |
 | Pre-Deploy Command | Leave blank |
 | Health Check Path | `/health` |
-| Registry Credential | None; the base image is public |
-| Environment Variables | None required; `HEADLESS=true` is set in the image and Render supplies `PORT` |
+| Environment Variables | `HEADLESS=true`, `PLAYWRIGHT_BROWSERS_PATH=0`, `BROWSER_PROFILE_PATH=/tmp/job-scraping-profile` |
 | Auto-Deploy | On Commit, if you want pushes to deploy automatically |
 | Instance Type | Choose a plan with enough memory for Chromium; 2 GB is a starting recommendation, not a measured requirement |
 
-The container installs Python dependencies, Chromium, and its Linux libraries.
-It starts `uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1`.
+The build installs Python dependencies and Chromium. `PLAYWRIGHT_BROWSERS_PATH=0`
+keeps the browser installation inside the Playwright package for runtime access.
+Render supplies `PORT`; `.python-version` selects Python 3.11.
 After deployment, check `/health` and open `/docs` on your Render service URL.
+
+For an existing Docker service, open Settings → Build → Source → Edit, select
+the repository, and switch Runtime to Python with the commands above.
 
 Local runs retain a visible browser by default. Set `HEADLESS=true` to run locally
 without a browser window.
 
 ### Current limitations
 
-- The image excludes `.auth` and `.env`. Local login sessions are not deployed;
-  authenticated sites require separate server-side authentication setup.
-- `.auth` is currently tracked in Git. Excluding it from Docker does not remove
-  browser cookies or history from the repository; avoid committing more profile data.
+- Chromium also requires Linux system libraries. The native runtime has not been
+  tested here; if browser launch reports a missing shared library, downloading
+  Chromium alone is insufficient. Native builds cannot be assumed to support
+  privileged `playwright install --with-deps` installation.
+- `BROWSER_PROFILE_PATH` points to a fresh server profile. Authenticated sites
+  require separate server-side authentication setup.
+- `.auth` is currently tracked in Git and is included in a native checkout.
+  The server uses the separate profile path above; avoid committing more profile data.
 - The server profile is ephemeral and may be lost on restarts or deployments.
 - Both scraping endpoints share one browser profile. Send scraping requests one
   at a time until profile locking or isolated request contexts are implemented.
 - `/jd-scrape` currently expects a JSON body on a GET request. Use a client that
   supports this; browser-based Swagger UI may not send it.
 
-References: [Render Docker deployment](https://render.com/docs/docker),
-[Playwright Docker documentation](https://playwright.dev/python/docs/docker).
+References: [Render FastAPI deployment](https://render.com/docs/deploy-fastapi),
+[Render native runtimes](https://render.com/docs/native-runtimes),
+[Playwright browser installation](https://playwright.dev/python/docs/browsers).

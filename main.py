@@ -100,10 +100,19 @@ def get_job_description(request: JobScrapeRequest):
                 request_id = uuid4().hex[:12]
                 attach_diagnostics(page, request_id)
                 stage = "navigation"
-                
+
                 try:
                     log_scrape(stage, request_id=request_id, **safe_location(url))
                     response = page.goto(url, wait_until="domcontentloaded")
+                    log_scrape(
+                        "response_check",
+                        request_id=request_id,
+                        status=response.status if response else None,
+                        cloudflare_challenge=(
+                            response.headers.get("cf-mitigated") == "challenge"
+                            if response else False
+                        ),
+                    )
                     log_scrape("navigated", request_id=request_id,
                                status=response.status if response else None,
                                **safe_location(page.url))

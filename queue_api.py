@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import time
+from threading import Lock
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -16,6 +17,8 @@ from main import ApplicationQuestionsRequest, application_questions
 
 app = FastAPI(title="Scraping job queue")
 LEASE_SECONDS = 300
+# This limit is per process; deploy with --workers 1 and one Render instance.
+application_scrape_lock = Lock()
 
 
 def authenticate(authorization: str = Header(default="")):
@@ -28,7 +31,15 @@ def authenticate(authorization: str = Header(default="")):
 
 @app.post("/application-questions", dependencies=[Depends(authenticate)])
 def direct_application_questions(request: ApplicationQuestionsRequest):
-    return application_questions(request)
+    if not application_scrape_lock.acquire(blocking=False):
+        raise HTTPException(
+            429, "An application scrape is already running. Retry shortly.",
+            headers={"Retry-After": "10"},
+        )
+    try:
+        return application_questions(request)
+    finally:
+        application_scrape_lock.release()
 
 
 @contextmanager

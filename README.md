@@ -52,6 +52,11 @@ Send `POST /application-questions` with the same bearer token and a JSON body:
 This accepts non-Handshake URLs and returns the existing list of application
 results in the same HTTP response. No job ID, polling, or local worker is needed.
 Large batches can take longer than a client/proxy timeout; use small batches.
+Only one direct application request runs at a time per server process. Overlapping
+requests receive HTTP 429 with `Retry-After: 10`; retry after that delay (with a
+bounded retry count). Keep `--workers 1` and one Render instance for this limit.
+The slot is released even when scraping fails. A single Chromium browser can
+still exceed the instance memory limit on a heavy page; monitor Render memory.
 
 ## 2. Authenticate and start the worker on your computer
 

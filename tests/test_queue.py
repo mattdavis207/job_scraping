@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +90,40 @@ class QueueTests(unittest.TestCase):
             pass
         playwright.chromium.launch.return_value.new_context.assert_called_once_with()
         playwright.chromium.launch.return_value.close.assert_called_once()
+
+    def test_overlapping_application_requests_do_not_launch_second_scrape(self):
+        started, release = Event(), Event()
+
+        def slow_scrape(request):
+            started.set()
+            if not release.wait(5):
+                raise AssertionError('Test scrape was not released')
+            return []
+
+        body = {'urls': ['https://example.com/apply']}
+        with patch('queue_api.application_questions', side_effect=slow_scrape) as scrape:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                first = pool.submit(self.post, '/application-questions', body)
+                try:
+                    self.assertTrue(started.wait(5))
+                    second = self.post('/application-questions', body)
+                    self.assertEqual(second.status_code, 429)
+                    self.assertEqual(second.headers['Retry-After'], '10')
+                    scrape.assert_called_once()
+                    self.assertEqual(self.post('/worker/claim', {}).status_code, 200)
+                finally:
+                    release.set()
+                self.assertEqual(first.result(timeout=5).status_code, 200)
+        with patch('queue_api.application_questions', return_value=[]):
+            self.assertEqual(self.post('/application-questions', body).status_code, 200)
+
+    def test_application_lock_released_after_failure(self):
+        request = main.ApplicationQuestionsRequest(urls=['https://example.com/apply'])
+        with patch('queue_api.application_questions', side_effect=RuntimeError('Browser failed')):
+            with self.assertRaises(RuntimeError):
+                queue_api.direct_application_questions(request)
+        with patch('queue_api.application_questions', return_value=[]):
+            self.assertEqual(queue_api.direct_application_questions(request), [])
 
     def test_application_collects_all_fields(self):
         context = MagicMock()

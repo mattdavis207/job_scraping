@@ -201,7 +201,7 @@ def application_questions(request: ApplicationQuestionsRequest):
         result = scrape_application(url)
         results.append(result)
 
-    return results
+    return {"results": results}
 
 
 

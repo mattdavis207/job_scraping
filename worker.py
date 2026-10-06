@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+import ssl
+import certifi
 from pathlib import Path
 import threading
 import time
@@ -11,9 +13,11 @@ from urllib.request import Request, urlopen
 
 
 def main():
-    base = os.environ["QUEUE_API_URL"].rstrip("/")
+    base = os.environ["QUEUE_API_URL"].strip().rstrip("/")
     token = os.environ["QUEUE_API_TOKEN"]
     parsed = urlsplit(base)
+    if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
+        raise SystemExit("QUEUE_API_URL must be the service base URL, without /jobs or credentials")
     if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")):
         raise SystemExit("QUEUE_API_URL must use HTTPS (except localhost)")
     os.environ.setdefault("HANDSHAKE_STORAGE_STATE", str(
@@ -25,10 +29,12 @@ def main():
     from main import JobScrapeRequest, get_job_description, scrape_application
     from queue_api import NewJob
 
+    tls_context = ssl.create_default_context(cafile=os.getenv("SSL_CERT_FILE") or certifi.where())
+
     def post(path, body):
         request = Request(base + path, data=json.dumps(body).encode(), method="POST",
                           headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=30, context=tls_context) as response:
             return json.load(response)
 
     def keep_alive(job, stop):
@@ -38,7 +44,7 @@ def main():
             except (HTTPError, URLError, TimeoutError):
                 logging.warning("Heartbeat failed for job %s; retrying", job["id"])
 
-    logging.info("Worker ready; waiting for jobs. Press Ctrl+C to stop.")
+    logging.info("Worker ready; polling %s. Press Ctrl+C to stop.", base)
     while True:
         try:
             job = post("/worker/claim", {}).get("job")
@@ -90,8 +96,10 @@ def main():
                 raise SystemExit("Queue authentication failed; check QUEUE_API_TOKEN") from None
             logging.warning("Queue HTTP error %s; retrying in 10 seconds", exc.code)
             time.sleep(10)
-        except (URLError, TimeoutError):
-            logging.warning("Queue unavailable; retrying in 10 seconds")
+        except (URLError, TimeoutError) as exc:
+            reason = exc.reason if isinstance(exc, URLError) else exc
+            logging.warning("Queue unavailable (%s: %s); retrying in 10 seconds",
+                            type(reason).__name__, reason)
             time.sleep(10)
 
 

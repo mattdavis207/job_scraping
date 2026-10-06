@@ -107,9 +107,11 @@ def get_job(job_id: str):
         row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Unknown job")
-    return {"id": row["id"], "kind": row["kind"], "url": row["url"],
+    return {"job_description_results": 
+            {"id": row["id"], "kind": row["kind"], "url": row["url"],
             "status": row["status"], "error": row["error"],
             "result": json.loads(row["result"]) if row["result"] else None}
+        }
 
 
 @app.post("/worker/claim", dependencies=[Depends(authenticate)])
